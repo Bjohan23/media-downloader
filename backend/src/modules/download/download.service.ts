@@ -150,11 +150,16 @@ export class DownloadService {
 
     // Format selection
     if (mediaType === 'audio') {
-      args.push('-x', '--audio-format', format);
+      // Extract audio in the specified format
+      args.push('-x', '--audio-format', format, '--audio-quality', '0');  // 0 = best quality
     } else {
-      // Video format selection
-      const formatString = this.getFormatString(quality, format);
-      args.push('-f', formatString, '--merge-output-format', format);
+      // Video format selection - use best available
+      if (quality === 'highest') {
+        args.push('-f', 'bestvideo+bestaudio/best', '--merge-output-format', format);
+      } else {
+        const formatString = this.getFormatString(quality, format);
+        args.push('-f', formatString, '--merge-output-format', format);
+      }
     }
 
     args.push(url);
@@ -198,7 +203,7 @@ export class DownloadService {
         }
       });
 
-      ytdlp.on('close', (code) => {
+      ytdlp.on('close', async (code) => {
         if (code !== 0) {
           job.status = 'failed';
           job.errorMessage = `Download failed: ${errorOutput}`;
@@ -212,15 +217,53 @@ export class DownloadService {
         const newFiles = filesAfter.filter(f => !filesBefore.includes(f));
 
         if (newFiles.length > 0) {
-          // Get the most recently created file
-          const downloadedFile = newFiles
-            .map(f => ({
-              name: f,
-              time: fs.statSync(path.join(downloadPath, f)).mtime.getTime(),
-            }))
-            .sort((a, b) => b.time - a.time)[0];
+          // Filter out temporary files (.part, .temp, .ytdl, etc.)
+          const completedFiles = newFiles.filter(f =>
+            !f.endsWith('.part') &&
+            !f.endsWith('.temp') &&
+            !f.endsWith('.ytdl') &&
+            !f.includes('.part-Frag') &&
+            !f.endsWith('.f625') &&  // yt-dlp temp format
+            !f.endsWith('.f625.mp4') &&
+            !f.startsWith('tmp_')
+          );
 
-          job.downloadPath = `/downloads/${downloadedFile.name}`;
+          if (completedFiles.length > 0) {
+            // Get the most recently created file
+            const downloadedFile = completedFiles
+              .map(f => ({
+                name: f,
+                time: fs.statSync(path.join(downloadPath, f)).mtime.getTime(),
+              }))
+              .sort((a, b) => b.time - a.time)[0];
+
+            job.downloadPath = `/downloads/${downloadedFile.name}`;
+          } else {
+            // If only temp files found, wait a moment and try again
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const finalFiles = fs.readdirSync(downloadPath);
+            const finalNewFiles = finalFiles.filter(f =>
+              !filesBefore.includes(f) &&
+              !f.endsWith('.part') &&
+              !f.endsWith('.temp') &&
+              !f.endsWith('.ytdl') &&
+              !f.includes('.part-Frag') &&
+              !f.endsWith('.f625') &&
+              !f.endsWith('.f625.mp4') &&
+              !f.startsWith('tmp_')
+            );
+
+            if (finalNewFiles.length > 0) {
+              const downloadedFile = finalNewFiles
+                .map(f => ({
+                  name: f,
+                  time: fs.statSync(path.join(downloadPath, f)).mtime.getTime(),
+                }))
+                .sort((a, b) => b.time - a.time)[0];
+
+              job.downloadPath = `/downloads/${downloadedFile.name}`;
+            }
+          }
         }
 
         job.status = 'completed';

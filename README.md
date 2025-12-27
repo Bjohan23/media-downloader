@@ -139,12 +139,23 @@ DOWNLOAD_PATH=./downloads
 ```
 
 ### Variables de Entorno (Frontend)
-Actualizar `.env`:
-```env
-DATABASE_URL=file:/home/z/my-project/db/custom.db
-NEXT_PUBLIC_API_URL=http://localhost:3001
-NEXT_PUBLIC_WS_URL=http://localhost:3001
+
+Copiar `.env.example` a `.env.local`:
+```bash
+cp .env.example .env.local
 ```
+
+Configurar la URL del backend:
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001
+```
+
+**Para producción**, cambiar a la URL real del servidor:
+```env
+NEXT_PUBLIC_API_URL=https://tu-backend-api.com
+```
+
+> **Nota**: El archivo `.env.local` NO debe subirse al repositorio (ya está en `.gitignore`)
 
 ## 📁 Estructura del Proyecto
 
