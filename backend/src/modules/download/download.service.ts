@@ -216,6 +216,10 @@ export class DownloadService {
         const filesAfter = fs.readdirSync(downloadPath);
         const newFiles = filesAfter.filter(f => !filesBefore.includes(f));
 
+        console.log('[Download] Files before:', filesBefore.length);
+        console.log('[Download] Files after:', filesAfter.length);
+        console.log('[Download] New files:', newFiles);
+
         if (newFiles.length > 0) {
           // Filter out temporary files (.part, .temp, .ytdl, etc.)
           const completedFiles = newFiles.filter(f =>
@@ -228,6 +232,8 @@ export class DownloadService {
             !f.startsWith('tmp_')
           );
 
+          console.log('[Download] Completed files:', completedFiles);
+
           if (completedFiles.length > 0) {
             // Get the most recently created file
             const downloadedFile = completedFiles
@@ -237,7 +243,8 @@ export class DownloadService {
               }))
               .sort((a, b) => b.time - a.time)[0];
 
-            job.downloadPath = `/downloads/${downloadedFile.name}`;
+            job.downloadPath = `/api/downloads/download-file/${downloadedFile.name}`;
+            console.log('[Download] Download path set:', job.downloadPath);
           } else {
             // If only temp files found, wait a moment and try again
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -253,6 +260,8 @@ export class DownloadService {
               !f.startsWith('tmp_')
             );
 
+            console.log('[Download] Final new files after delay:', finalNewFiles);
+
             if (finalNewFiles.length > 0) {
               const downloadedFile = finalNewFiles
                 .map(f => ({
@@ -261,7 +270,8 @@ export class DownloadService {
                 }))
                 .sort((a, b) => b.time - a.time)[0];
 
-              job.downloadPath = `/downloads/${downloadedFile.name}`;
+              job.downloadPath = `/api/downloads/download-file/${downloadedFile.name}`;
+              console.log('[Download] Download path set (after delay):', job.downloadPath);
             }
           }
         }
@@ -269,6 +279,11 @@ export class DownloadService {
         job.status = 'completed';
         job.progress = 100;
         job.completedAt = new Date();
+
+        // Update job in map
+        this.jobs.set(job.id, job);
+
+        console.log('[Download] Job completed:', { id: job.id, status: job.status, downloadPath: job.downloadPath });
         this.wsGateway.broadcastJobUpdate(job);
         resolve(null);
       });
