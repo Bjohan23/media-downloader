@@ -62,14 +62,18 @@ async function bootstrap() {
     prefix: '/downloads/',
   });
 
+  // Configuración de CORS para desarrollo y producción
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+
   app.enableCors({
-    origin: [
-      process.env.FRONTEND_URL || 'http://localhost:3000',
-      'http://localhost:3000',
-      'http://127.0.0.1:3000',
-    ],
+    origin: isDevelopment
+      ? true // Permitir cualquier origen en desarrollo
+      : [
+          process.env.FRONTEND_URL || 'https://mediadownloader.com',
+          'https://mediadownloader.com',
+        ],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     exposedHeaders: ['Content-Disposition', 'Content-Length'],
   });

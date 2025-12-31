@@ -1,22 +1,23 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
-import { RootStackParamList } from './types';
+import { RootTabParamList } from './types';
 import HomeScreen from '../screens/HomeScreen';
 import DownloadsScreen from '../screens/DownloadsScreen';
 
-const Stack = createNativeStackNavigator<RootStackParamList>();
+const Tab = createBottomTabNavigator<RootTabParamList>();
 
 /**
- * Navegador principal
+ * Navegador principal con Tabs
  */
 export const RootNavigator = () => {
   const { theme } = useTheme();
 
   return (
     <NavigationContainer>
-      <Stack.Navigator
+      <Tab.Navigator
         initialRouteName="Home"
         screenOptions={{
           headerStyle: {
@@ -28,26 +29,44 @@ export const RootNavigator = () => {
             fontSize: theme.typography.fontSize.lg,
           },
           headerShadowVisible: false,
-          contentStyle: {
-            backgroundColor: theme.colors.background,
+          tabBarStyle: {
+            backgroundColor: theme.colors.surface,
+            borderTopColor: theme.colors.border,
+            borderTopWidth: 1,
+            paddingBottom: 5,
+            height: 60,
+          },
+          tabBarActiveTintColor: theme.colors.primary,
+          tabBarInactiveTintColor: theme.colors.textSecondary,
+          tabBarLabelStyle: {
+            fontSize: 12,
+            fontWeight: '600',
           },
         }}
       >
-        <Stack.Screen
+        <Tab.Screen
           name="Home"
           component={HomeScreen}
           options={{
-            title: 'Media Downloader',
+            title: 'Nueva Descarga',
+            tabBarLabel: 'Descargar',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="download-outline" size={size} color={color} />
+            ),
           }}
         />
-        <Stack.Screen
+        <Tab.Screen
           name="Downloads"
           component={DownloadsScreen}
           options={{
-            title: 'Downloads',
+            title: 'Mis Descargas',
+            tabBarLabel: 'Descargas',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="list-outline" size={size} color={color} />
+            ),
           }}
         />
-      </Stack.Navigator>
+      </Tab.Navigator>
     </NavigationContainer>
   );
 };

@@ -1,10 +1,9 @@
 /**
  * Tipos de navegación
  */
-export type RootStackParamList = {
+export type RootTabParamList = {
   Home: undefined;
   Downloads: undefined;
-  Auth: undefined;
 };
 
 export type HomeScreenParamList = {

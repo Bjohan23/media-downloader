@@ -22,7 +22,8 @@
       "Bash(npm search:*)",
       "Bash(npm config edit)",
       "Bash(npm run start)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(npm run ios:*)"
     ]
   }
 }

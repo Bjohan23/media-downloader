@@ -5,12 +5,19 @@ import {
   StyleSheet,
   RefreshControl,
   TouchableOpacity,
+  Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as MediaLibrary from 'expo-media-library';
 import { useTheme } from '../theme';
 import { Card, ProgressBar, Button, Text } from '../components';
 import { useDownloadStore } from '../stores';
-import { DownloadStatus, DownloadJob } from '@/domain/entities';
+import { DownloadStatus, DownloadJob, MediaType } from '@/domain/entities';
+import { getAllDownloadsUseCase } from '@/di';
+import { logger } from '@/utils/logger';
+import * as FileSystem from 'expo-file-system';
+import API_CONFIG from '@/data/services/api.config';
 
 /**
  * Componente Item de Descarga (optimizado con React.memo)
@@ -19,22 +26,21 @@ interface DownloadItemProps {
   job: DownloadJob;
   onPress?: (job: DownloadJob) => void;
   onDownload?: (job: DownloadJob) => void;
-  onRetry?: (job: DownloadJob) => void;
 }
 
 const DownloadItem = React.memo<DownloadItemProps>(({
   job,
   onPress,
   onDownload,
-  onRetry,
 }) => {
   const { theme } = useTheme();
+  const [downloading, setDownloading] = React.useState(false);
 
   const getStatusColor = () => {
     switch (job.status) {
       case DownloadStatus.PENDING:
         return theme.colors.warning;
-      case DownloadStatus.PROCESSING:
+      case DownloadStatus.DOWNLOADING:
         return theme.colors.primary;
       case DownloadStatus.COMPLETED:
         return theme.colors.success;
@@ -49,8 +55,8 @@ const DownloadItem = React.memo<DownloadItemProps>(({
     switch (job.status) {
       case DownloadStatus.PENDING:
         return 'Pendiente';
-      case DownloadStatus.PROCESSING:
-        return 'Procesando';
+      case DownloadStatus.DOWNLOADING:
+        return 'Descargando';
       case DownloadStatus.COMPLETED:
         return 'Completado';
       case DownloadStatus.FAILED:
@@ -60,20 +66,96 @@ const DownloadItem = React.memo<DownloadItemProps>(({
     }
   };
 
+  // Inferir plataforma desde la URL (para mostrar el icono correcto)
   const getPlatformIcon = (): keyof typeof Ionicons.glyphMap => {
-    switch (job.platform) {
-      case 'youtube':
-        return 'logo-youtube';
-      case 'instagram':
-        return 'logo-instagram';
-      case 'tiktok':
-        return 'musical-notes';
-      case 'twitter':
-        return 'logo-twitter';
-      case 'facebook':
-        return 'logo-facebook';
-      default:
-        return 'link';
+    const url = job.url.toLowerCase();
+    if (url.includes('youtube.com') || url.includes('youtu.be')) {
+      return 'logo-youtube';
+    } else if (url.includes('instagram.com')) {
+      return 'logo-instagram';
+    } else if (url.includes('tiktok.com')) {
+      return 'musical-notes';
+    } else if (url.includes('twitter.com') || url.includes('x.com')) {
+      return 'logo-twitter';
+    } else if (url.includes('facebook.com') || url.includes('fb.watch')) {
+      return 'logo-facebook';
+    }
+    return 'link';
+  };
+
+  const handleDownloadFile = async () => {
+    const filename = job.getFilename();
+    if (!filename) {
+      logger.warn('No hay filename para descargar', { jobId: job.id });
+      Alert.alert('Error', 'No se encontró el nombre del archivo');
+      return;
+    }
+
+    setDownloading(true);
+    try {
+      logger.info('Descargando archivo a galería', { filename });
+
+      // 1. Pedir permisos
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permiso requerido',
+          'Necesitas dar permiso para guardar fotos/videos en tu galería',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      // 2. Descargar archivo temporalmente
+      const downloadUrl = `${API_CONFIG.baseURL}/api/downloads/download-file/${filename}`;
+      const localUri = FileSystem.documentDirectory + filename;
+
+      logger.info('Descargando desde', { url: downloadUrl });
+      logger.info('Guardando en', { uri: localUri });
+
+      const downloadResult = await FileSystem.downloadAsync(downloadUrl, localUri);
+
+      if (downloadResult.status !== 200) {
+        throw new Error('Error al descargar el archivo');
+      }
+
+      logger.info('Archivo descargado, guardando en galería...');
+
+      // 3. Guardar en la galería
+      const asset = await MediaLibrary.createAssetAsync(downloadResult.uri);
+
+      logger.info('Archivo guardado en galería', { asset });
+
+      // 4. Crear álbum si no existe
+      const albumName = 'Media Downloader';
+      if (Platform.OS === 'android') {
+        const album = await MediaLibrary.getAlbumAsync(albumName);
+        if (album) {
+          await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+        } else {
+          await MediaLibrary.createAlbumAsync(albumName, asset, false);
+        }
+      }
+
+      // 5. Limpiar archivo temporal
+      await FileSystem.deleteAsync(localUri, { idempotent: true });
+
+      Alert.alert(
+        '¡Éxito!',
+        `Archivo guardado en tu galería${Platform.OS === 'android' ? ' (álbum: Media Downloader)' : ''}`,
+        [{ text: 'OK' }]
+      );
+
+      onDownload?.(job);
+    } catch (error) {
+      logger.error('Error al descargar archivo', error);
+      Alert.alert(
+        'Error',
+        error instanceof Error ? error.message : 'No se pudo descargar el archivo',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -83,6 +165,7 @@ const DownloadItem = React.memo<DownloadItemProps>(({
       activeOpacity={0.7}
     >
       <Card variant="outlined" style={{ marginBottom: theme.spacing.sm }}>
+        {/* Header: Icono de plataforma + Info */}
         <View
           style={{
             flexDirection: 'row',
@@ -97,6 +180,21 @@ const DownloadItem = React.memo<DownloadItemProps>(({
             style={{ marginRight: theme.spacing.sm }}
           />
           <View style={{ flex: 1 }}>
+            {/* Título (si está disponible) */}
+            {job.title ? (
+              <Text
+                style={{
+                  fontSize: theme.typography.fontSize.md,
+                  fontWeight: '600',
+                  color: theme.colors.textPrimary,
+                  marginBottom: 4,
+                }}
+                numberOfLines={2}
+              >
+                {job.title}
+              </Text>
+            ) : null}
+
             <View
               style={{
                 flexDirection: 'row',
@@ -104,39 +202,48 @@ const DownloadItem = React.memo<DownloadItemProps>(({
                 justifyContent: 'space-between',
               }}
             >
-              <View style={{ flex: 1, marginRight: theme.spacing.sm }}>
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <Ionicons
-                    name={
-                      job.type === 'video'
-                        ? 'videocam'
-                        : 'musical-notes'
-                    }
-                    size={14}
-                    color={theme.colors.textSecondary}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text style={{
-                    fontSize: theme.typography.fontSize.sm,
-                    color: theme.colors.textSecondary,
-                  }}>
-                    {job.quality.toUpperCase()}
-                  </Text>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  flex: 1,
+                }}
+              >
+                <Ionicons
+                  name={
+                    job.mediaType === MediaType.VIDEO
+                      ? 'videocam'
+                      : 'musical-notes'
+                  }
+                  size={14}
+                  color={theme.colors.textSecondary}
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={{
+                  fontSize: theme.typography.fontSize.sm,
+                  color: theme.colors.textSecondary,
+                }}>
+                  {job.quality.toUpperCase()}
+                </Text>
+                <Text style={{
+                  fontSize: theme.typography.fontSize.sm,
+                  color: theme.colors.textSecondary,
+                  marginLeft: theme.spacing.sm,
+                }}>
+                  {job.format.toUpperCase()}
+                </Text>
+                {job.duration ? (
                   <Text style={{
                     fontSize: theme.typography.fontSize.sm,
                     color: theme.colors.textSecondary,
                     marginLeft: theme.spacing.sm,
                   }}>
-                    {job.format.toUpperCase()}
+                    {job.duration}
                   </Text>
-                </View>
+                ) : null}
               </View>
+
               <View
                 style={{
                   backgroundColor: getStatusColor() + '20',
@@ -160,7 +267,8 @@ const DownloadItem = React.memo<DownloadItemProps>(({
           </View>
         </View>
 
-        {job.status === DownloadStatus.PROCESSING && (
+        {/* Barra de progreso durante la descarga */}
+        {job.status === DownloadStatus.DOWNLOADING && (
           <View style={{ marginTop: theme.spacing.sm }}>
             <ProgressBar progress={job.progress} />
             <Text
@@ -176,7 +284,8 @@ const DownloadItem = React.memo<DownloadItemProps>(({
           </View>
         )}
 
-        {job.status === DownloadStatus.COMPLETED && job.filename && (
+        {/* Botón de descarga cuando está completado */}
+        {job.status === DownloadStatus.COMPLETED && job.downloadPath && (
           <View
             style={{
               flexDirection: 'row',
@@ -185,8 +294,9 @@ const DownloadItem = React.memo<DownloadItemProps>(({
             }}
           >
             <Button
-              title="Descargar"
-              onPress={() => onDownload?.(job)}
+              title="Descargar Archivo"
+              onPress={handleDownloadFile}
+              loading={downloading}
               type="primary"
               size="small"
               icon="download"
@@ -194,6 +304,7 @@ const DownloadItem = React.memo<DownloadItemProps>(({
           </View>
         )}
 
+        {/* Mensaje de error cuando falló */}
         {job.status === DownloadStatus.FAILED && job.errorMessage && (
           <View style={{ marginTop: theme.spacing.sm }}>
             <Text
@@ -204,24 +315,10 @@ const DownloadItem = React.memo<DownloadItemProps>(({
             >
               {job.errorMessage}
             </Text>
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'flex-end',
-                marginTop: theme.spacing.sm,
-              }}
-            >
-              <Button
-                title="Reintentar"
-                onPress={() => onRetry?.(job)}
-                type="outline"
-                size="small"
-                icon="refresh"
-              />
-            </View>
           </View>
         )}
 
+        {/* Fecha de creación */}
         <Text
           style={{
             fontSize: theme.typography.fontSize.xs,
@@ -255,23 +352,33 @@ const DownloadsScreen: React.FC = () => {
     return downloads.filter((job) => job.status === filter);
   }, [downloads, filter]);
 
-  // Cargar descargas
+  // Cargar descargas desde el backend
   const loadDownloads = useCallback(async () => {
+    logger.info('Cargando descargas desde el backend');
     setRefreshing(true);
     setLoading(true);
     setError(null);
 
     try {
-      // Aquí iría la llamada al use case
-      // Por ahora, usamos los datos del store
+      const result = await getAllDownloadsUseCase.execute();
+
+      if (result.success && result.data) {
+        logger.info('Descargas cargadas', { count: result.data.length });
+        setDownloads(result.data);
+      } else {
+        logger.warn('Error al cargar descargas', { error: result.error });
+        setError(result.error || 'Error al cargar descargas');
+      }
     } catch (error) {
+      logger.error('Error en loadDownloads', error);
       setError(error instanceof Error ? error.message : 'Error al cargar descargas');
     } finally {
       setRefreshing(false);
       setLoading(false);
     }
-  }, [setLoading, setError]);
+  }, [setDownloads, setLoading, setError]);
 
+  // Cargar al montar
   useEffect(() => {
     loadDownloads();
   }, [loadDownloads]);
@@ -283,10 +390,10 @@ const DownloadsScreen: React.FC = () => {
       <DownloadItem
         job={item}
         onDownload={(job) => {
-          console.log('Download file:', job.filename);
-        }}
-        onRetry={(job) => {
-          console.log('Retry job:', job.id);
+          logger.info('Archivo descargado', {
+            id: job.id,
+            filename: job.getFilename(),
+          });
         }}
       />
     ),
@@ -306,7 +413,7 @@ const DownloadsScreen: React.FC = () => {
           borderBottomColor: theme.colors.border,
         }}
       >
-        {(['all', DownloadStatus.PENDING, DownloadStatus.PROCESSING, DownloadStatus.COMPLETED] as const).map(
+        {(['all', DownloadStatus.PENDING, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETED] as const).map(
           (status) => (
             <TouchableOpacity
               key={status}
@@ -335,8 +442,8 @@ const DownloadsScreen: React.FC = () => {
                 }}
               >
                 {status === 'all'
-                  ? 'All'
-                  : status.replace('_', ' ')}
+                  ? 'Todas'
+                  : getStatusLabel(status)}
               </Text>
             </TouchableOpacity>
           )
@@ -398,6 +505,24 @@ const DownloadsScreen: React.FC = () => {
       />
     </View>
   );
+};
+
+/**
+ * Obtener label para el filtro de estado
+ */
+const getStatusLabel = (status: DownloadStatus): string => {
+  switch (status) {
+    case DownloadStatus.PENDING:
+      return 'Pendientes';
+    case DownloadStatus.DOWNLOADING:
+      return 'Descargando';
+    case DownloadStatus.COMPLETED:
+      return 'Completadas';
+    case DownloadStatus.FAILED:
+      return 'Fallidas';
+    default:
+      return status;
+  }
 };
 
 const styles = StyleSheet.create({

@@ -1,15 +1,15 @@
 /**
- * Estados posibles de un job de descarga
+ * Estados posibles de un job de descarga (coincidente con backend)
  */
 export enum DownloadStatus {
   PENDING = 'pending',
-  PROCESSING = 'processing',
+  DOWNLOADING = 'downloading',
   COMPLETED = 'completed',
   FAILED = 'failed',
 }
 
 /**
- * Plataformas soportadas
+ * Plataformas soportadas (detectadas automáticamente por el backend)
  */
 export enum DownloadPlatform {
   YOUTUBE = 'youtube',
@@ -20,95 +20,73 @@ export enum DownloadPlatform {
 }
 
 /**
- * Tipos de descarga
+ * Tipos de media (coincidente con backend)
  */
-export enum DownloadType {
+export enum MediaType {
   VIDEO = 'video',
   AUDIO = 'audio',
 }
 
 /**
- * Calidades disponibles
- */
-export enum DownloadQuality {
-  LOW = '360p',
-  MEDIUM = '720p',
-  HIGH = '1080p',
-  ULTRA = '4k',
-}
-
-/**
- * Formatos de video
- */
-export enum VideoFormat {
-  MP4 = 'mp4',
-  WEBM = 'webm',
-  MKV = 'mkv',
-}
-
-/**
- * Formatos de audio
- */
-export enum AudioFormat {
-  MP3 = 'mp3',
-  M4A = 'm4a',
-  WAV = 'wav',
-  FLAC = 'flac',
-}
-
-/**
  * Entidad: Job de descarga
+ * Estructura coincidente con el backend
  */
 export class DownloadJob {
   constructor(
     public readonly id: string,
     public readonly url: string,
-    public readonly platform: DownloadPlatform,
-    public readonly type: DownloadType,
-    public readonly quality: DownloadQuality,
+    public readonly title: string,
+    public readonly duration: string,
+    public readonly thumbnail: string,
+    public readonly mediaType: MediaType,
+    public readonly quality: string,
     public readonly format: string,
     public status: DownloadStatus,
     public progress: number,
-    public filename: string | null,
+    public downloadPath: string | null,
     public errorMessage: string | null,
     public readonly createdAt: Date,
-    public updatedAt: Date,
+    public completedAt: Date | null,
   ) {}
 
   /**
    * Actualizar el progreso de la descarga
    */
-  updateProgress(progress: number): DownloadJob {
+  updateProgress(progress: number, status?: DownloadStatus): DownloadJob {
     return new DownloadJob(
       this.id,
       this.url,
-      this.platform,
-      this.type,
+      this.title,
+      this.duration,
+      this.thumbnail,
+      this.mediaType,
       this.quality,
       this.format,
-      this.status,
+      status || this.status,
       Math.min(100, Math.max(0, progress)),
-      this.filename,
+      this.downloadPath,
       this.errorMessage,
       this.createdAt,
-      new Date(),
+      this.completedAt,
     );
   }
 
   /**
    * Marcar como completado
    */
-  markAsCompleted(filename: string): DownloadJob {
+  markAsCompleted(downloadPath: string): DownloadJob {
     return new DownloadJob(
       this.id,
       this.url,
-      this.platform,
-      this.type,
+      this.title,
+      this.duration,
+      this.thumbnail,
+      this.mediaType,
       this.quality,
       this.format,
       DownloadStatus.COMPLETED,
       100,
-      filename,
+      downloadPath,
       null,
       this.createdAt,
       new Date(),
@@ -122,8 +100,10 @@ export class DownloadJob {
     return new DownloadJob(
       this.id,
       this.url,
-      this.platform,
-      this.type,
+      this.title,
+      this.duration,
+      this.thumbnail,
+      this.mediaType,
       this.quality,
       this.format,
       DownloadStatus.FAILED,
@@ -131,7 +111,7 @@ export class DownloadJob {
       null,
       errorMessage,
       this.createdAt,
-      new Date(),
+      null,
     );
   }
 
@@ -139,7 +119,14 @@ export class DownloadJob {
    * Verificar si está en progreso
    */
   isInProgress(): boolean {
-    return this.status === DownloadStatus.PROCESSING;
+    return this.status === DownloadStatus.DOWNLOADING;
+  }
+
+  /**
+   * Verificar si está pendiente
+   */
+  isPending(): boolean {
+    return this.status === DownloadStatus.PENDING;
   }
 
   /**
@@ -157,22 +144,33 @@ export class DownloadJob {
   }
 
   /**
+   * Obtener nombre de archivo desde downloadPath
+   */
+  getFilename(): string | null {
+    if (!this.downloadPath) return null;
+    const parts = this.downloadPath.split(/[/\\]/);
+    return parts[parts.length - 1] || null;
+  }
+
+  /**
    * Crear desde DTO (API response)
    */
   static fromDTO(dto: DownloadJobDTO): DownloadJob {
     return new DownloadJob(
-      dto.jobId,
+      dto.id,
       dto.url,
-      dto.platform as DownloadPlatform,
-      dto.type as DownloadType,
-      dto.quality as DownloadQuality,
+      dto.title || '',
+      dto.duration || '',
+      dto.thumbnail || '',
+      dto.mediaType as MediaType,
+      dto.quality,
       dto.format,
       dto.status as DownloadStatus,
       dto.progress,
-      dto.filename,
-      dto.errorMessage,
+      dto.downloadPath || null,
+      dto.errorMessage || null,
       new Date(dto.createdAt),
-      new Date(dto.updatedAt || dto.createdAt),
+      dto.completedAt ? new Date(dto.completedAt) : null,
     );
   }
 
@@ -181,36 +179,40 @@ export class DownloadJob {
    */
   toDTO(): DownloadJobDTO {
     return {
-      jobId: this.id,
+      id: this.id,
       url: this.url,
-      platform: this.platform,
-      type: this.type,
+      title: this.title,
+      duration: this.duration,
+      thumbnail: this.thumbnail,
+      mediaType: this.mediaType,
       quality: this.quality,
       format: this.format,
       status: this.status,
       progress: this.progress,
-      filename: this.filename,
+      downloadPath: this.downloadPath,
       errorMessage: this.errorMessage,
       createdAt: this.createdAt.toISOString(),
-      updatedAt: this.updatedAt.toISOString(),
+      completedAt: this.completedAt?.toISOString(),
     };
   }
 }
 
 /**
- * DTO para API response
+ * DTO para API response (coincidente con backend)
  */
 export interface DownloadJobDTO {
-  jobId: string;
+  id: string;
   url: string;
-  platform: string;
-  type: DownloadType;
-  quality: DownloadQuality;
+  title: string;
+  duration: string;
+  thumbnail: string;
+  mediaType: MediaType;
+  quality: string;
   format: string;
   status: string;
   progress: number;
-  filename: string | null;
-  errorMessage: string | null;
+  downloadPath?: string;
+  errorMessage?: string;
   createdAt: string;
-  updatedAt?: string;
+  completedAt?: string;
 }
