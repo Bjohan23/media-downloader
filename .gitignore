@@ -1,106 +1,42 @@
 # Dependencies
-node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+node_modules/
+.pnp
+.pnp.js
 
 # Testing
-/coverage
-.nyc_output
-
-# Next.js
-/.next/
-/out/
-.next-env.d.ts
+coverage/
 
 # Production
-/build
-/dist
-
-# NestJS backend (compilados)
-backend/dist
-*.js.map
-!*.config.js
-!next.config.js
-!jest.config.js
-
-# Prisma
-backend/prisma/migrations
-backend/dev.db
-backend/dev.db-journal
-backend/prisma/*.db
-backend/prisma/*.db-journal
-
-# Downloads
-downloads
-*.mp3
-*.mp4
-*.webm
-*.avi
-*.mov
-*.mkv
-*.flv
-*.m4a
-*.wav
+dist/
+build/
+.next/
+out/
 
 # Misc
 .DS_Store
 *.pem
-*.swp
-*.swo
-*~
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # Debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
-lerna-debug.log*
 
-# Env files (can opt-in for committing if needed)
-.env
-.env*.local
-.env.development
-.env.production
-
-# Vercel
-.vercel
-
-# TypeScript
-*.tsbuildinfo
-next-env.d.ts
-local-*
-
-# Logs
-logs
-*.log
-server.log
-dev.log
+# Local database files
+*.db
+*.db-journal
+db/*.db
 
 # IDE
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
+.vscode/
 .idea/
-*.iml
-*.suo
-*.user
+*.swp
+*.swo
+*~
 
 # OS
 Thumbs.db
-.DS_Store
-
-# Claude AI
-.z-ai-config
-test
-prompt
-
-# Redis dumps
-dump.rdb
-appendonly.aof
