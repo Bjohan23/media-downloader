@@ -10,13 +10,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { useTheme } from '../theme';
 import { Card, ProgressBar, Button, Text } from '../components';
 import { useDownloadStore } from '../stores';
 import { DownloadStatus, DownloadJob, MediaType } from '@/domain/entities';
 import { getAllDownloadsUseCase } from '@/di';
 import { logger } from '@/utils/logger';
-import * as FileSystem from 'expo-file-system';
 import API_CONFIG from '@/data/services/api.config';
 
 /**
@@ -92,11 +93,31 @@ const DownloadItem = React.memo<DownloadItemProps>(({
     }
 
     setDownloading(true);
+    let tempUri: string | null = null;
+    let finalUri: string | null = null;
+
     try {
       logger.info('Descargando archivo a galería', { filename });
 
-      // 1. Pedir permisos
-      const { status } = await MediaLibrary.requestPermissionsAsync();
+      // 1. Pedir permisos (justo antes de guardar)
+      const { status, accessPrivileges } = await MediaLibrary.requestPermissionsAsync();
+
+      logger.info('Permisos de MediaLibrary', { status, accessPrivileges });
+
+      // En Android con Expo Go, los permisos son limitados
+      if (Platform.OS === 'android' && accessPrivileges !== 'all') {
+        Alert.alert(
+          '⚠️ Limitación de Expo Go',
+          'Expo Go no tiene acceso completo a la galería en Android.\n\n' +
+          'Para guardar archivos, necesitas crear una development build.\n\n' +
+          'Más info: https://docs.expo.dev/develop/development-builds/create-a-build',
+          [
+            { text: 'Entendido' },
+          ]
+        );
+        return;
+      }
+
       if (status !== 'granted') {
         Alert.alert(
           'Permiso requerido',
@@ -106,29 +127,90 @@ const DownloadItem = React.memo<DownloadItemProps>(({
         return;
       }
 
-      // 2. Descargar archivo temporalmente
-      const downloadUrl = `${API_CONFIG.baseURL}/api/downloads/download-file/${filename}`;
-      const localUri = FileSystem.documentDirectory + filename;
+      // 2. Descargar archivo temporalmente a cache
+      const encodedFilename = encodeURIComponent(filename);
+      const downloadUrl = `${API_CONFIG.baseURL}/api/downloads/download-file/${encodedFilename}`;
 
-      logger.info('Descargando desde', { url: downloadUrl });
-      logger.info('Guardando en', { uri: localUri });
+      // Nombre seguro para el archivo
+      const safeFilename = filename.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '');
+      const cacheUri = `${FileSystem.cacheDirectory}${safeFilename}`;
 
-      const downloadResult = await FileSystem.downloadAsync(downloadUrl, localUri);
+      logger.info('PASO 1: Descargando a cache', { url: downloadUrl, cacheUri });
+
+      const downloadResult = await FileSystem.downloadAsync(downloadUrl, cacheUri);
 
       if (downloadResult.status !== 200) {
         throw new Error('Error al descargar el archivo');
       }
 
-      logger.info('Archivo descargado, guardando en galería...');
+      tempUri = downloadResult.uri;
+      logger.info('Archivo descargado a cache', { uri: tempUri });
 
-      // 3. Guardar en la galería
-      const asset = await MediaLibrary.createAssetAsync(downloadResult.uri);
+      // 3. Mover a documentDirectory (PASO CRÍTICO para iOS)
+      const finalFilename = safeFilename;
+      finalUri = `${FileSystem.documentDirectory}${finalFilename}`;
 
-      logger.info('Archivo guardado en galería', { asset });
+      logger.info('PASO 2: Moviendo a documentDirectory', { from: tempUri, to: finalUri });
 
-      // 4. Crear álbum si no existe
-      const albumName = 'Media Downloader';
-      if (Platform.OS === 'android') {
+      await FileSystem.copyAsync({
+        from: tempUri,
+        to: finalUri,
+      });
+
+      logger.info('Archivo movido exitosamente', { finalUri });
+
+      // 4. Detectar el tipo de media
+      const fileExtension = filename.split('.').pop()?.toLowerCase();
+      let mediaType: MediaLibrary.MediaTypeValue | null = null;
+
+      if (fileExtension === 'mp3' || fileExtension === 'm4a' || fileExtension === 'wav' || fileExtension === 'flac') {
+        mediaType = 'audio';
+      } else if (fileExtension === 'mp4' || fileExtension === 'mov' || fileExtension === 'webm') {
+        mediaType = 'video';
+      } else if (fileExtension === 'jpg' || fileExtension === 'jpeg' || fileExtension === 'png') {
+        mediaType = 'photo';
+      }
+
+      logger.info('Tipo de media detectado', { fileExtension, mediaType });
+
+      // 5. Guardar en la galería desde documentDirectory
+      logger.info('PASO 3: Guardando en galería desde documentDirectory');
+
+      let asset: MediaLibrary.Asset | null = null;
+
+      try {
+        asset = await MediaLibrary.createAssetAsync(finalUri, mediaType || undefined);
+        logger.info('Archivo guardado en galería', { assetId: asset.id, uri: asset.uri });
+      } catch (mediaLibraryError) {
+        logger.warn('MediaLibrary falló (error 3302), usando Sharing como fallback', mediaLibraryError);
+
+        // Fallback a Sharing para Expo Go
+        await Sharing.shareAsync(finalUri, {
+          mimeType: mediaType === 'audio' ? 'audio/mp3' : mediaType === 'video' ? 'video/mp4' : 'image/jpeg',
+          dialogTitle: `Guardar ${mediaType === 'audio' ? 'audio' : mediaType === 'video' ? 'video' : 'imagen'}`,
+        });
+
+        // Después de compartir, limpiar archivos
+        if (tempUri) {
+          await FileSystem.deleteAsync(tempUri, { idempotent: true });
+        }
+        if (finalUri) {
+          await FileSystem.deleteAsync(finalUri, { idempotent: true });
+        }
+
+        Alert.alert(
+          '✅ Archivo listo',
+          'Elige dónde guardarlo desde el menú compartir:\n\n• Fotos\n• Música\n• Archivos\n• iCloud Drive',
+          [{ text: 'OK' }]
+        );
+
+        onDownload?.(job);
+        return; // Salir porque el usuario ya eligió dónde guardarlo
+      }
+
+      // 6. Crear álbum si no existe (solo Android, solo si asset existe)
+      if (Platform.OS === 'android' && asset) {
+        const albumName = 'Media Downloader';
         const album = await MediaLibrary.getAlbumAsync(albumName);
         if (album) {
           await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
@@ -137,18 +219,34 @@ const DownloadItem = React.memo<DownloadItemProps>(({
         }
       }
 
-      // 5. Limpiar archivo temporal
-      await FileSystem.deleteAsync(localUri, { idempotent: true });
+      // 7. Limpiar archivos temporales (solo si se guardó con MediaLibrary)
+      if (asset) {
+        if (tempUri) {
+          await FileSystem.deleteAsync(tempUri, { idempotent: true });
+        }
+        if (finalUri) {
+          await FileSystem.deleteAsync(finalUri, { idempotent: true });
+        }
 
-      Alert.alert(
-        '¡Éxito!',
-        `Archivo guardado en tu galería${Platform.OS === 'android' ? ' (álbum: Media Downloader)' : ''}`,
-        [{ text: 'OK' }]
-      );
+        Alert.alert(
+          '✅ ¡Éxito!',
+          `Archivo guardado en tu galería\n\n${mediaType === 'audio' ? '🎵 Busca en la app de Música' : mediaType === 'video' ? '🎬 Busca en la app de Fotos' : '📷 Busca en la app de Fotos'}`,
+          [{ text: 'OK' }]
+        );
 
-      onDownload?.(job);
+        onDownload?.(job);
+      }
     } catch (error) {
       logger.error('Error al descargar archivo', error);
+
+      // Limpiar archivos temporales en caso de error
+      if (tempUri) {
+        await FileSystem.deleteAsync(tempUri, { idempotent: true });
+      }
+      if (finalUri) {
+        await FileSystem.deleteAsync(finalUri, { idempotent: true });
+      }
+
       Alert.alert(
         'Error',
         error instanceof Error ? error.message : 'No se pudo descargar el archivo',
