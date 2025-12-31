@@ -23,7 +23,12 @@
       "Bash(npm config edit)",
       "Bash(npm run start)",
       "Bash(cat:*)",
-      "Bash(npm run ios:*)"
+      "Bash(npm run ios:*)",
+      "Bash(git rm:*)",
+      "Bash(del:*)",
+      "Bash(git add:*)",
+      "Bash(git reset:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
