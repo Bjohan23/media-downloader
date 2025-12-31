@@ -8,7 +8,21 @@
       "Bash(netstat:*)",
       "Bash(taskkill:*)",
       "Bash(redis-cli:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(npm logout:*)",
+      "Bash(npm cache clean:*)",
+      "Bash(if exist node_modules rmdir /s /q node_modules)",
+      "Bash(if exist:*)",
+      "Bash(if exist .expo rmdir:*)",
+      "Bash(npm config get:*)",
+      "Bash(npm config list:*)",
+      "Bash(npm view:*)",
+      "Bash(npm config delete:*)",
+      "Bash(npm config set:*)",
+      "Bash(npm search:*)",
+      "Bash(npm config edit)",
+      "Bash(npm run start)",
+      "Bash(cat:*)"
     ]
   }
 }

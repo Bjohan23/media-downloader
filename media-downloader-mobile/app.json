@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Media Downloader",
+    "slug": "media-downloader",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#0EA5E9"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mediadownloader.app"
+    },
+    "android": {
+      "package": "com.mediadownloader.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0EA5E9"
+      },
+      "permissions": [
+        "INTERNET",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "favicon": "#0EA5E9"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}
