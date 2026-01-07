@@ -11,8 +11,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useTheme } from 'next-themes';
 import { Download, Play, Music, FileVideo, CheckCircle, XCircle, Clock, Sun, Moon, Youtube, Link2, Sparkles, Zap, Trash2 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
+import { getBackendURL } from '@/lib/desktop';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const DEFAULT_API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 interface DownloadJob {
   id: string;
@@ -40,9 +41,15 @@ export default function Home() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL);
 
   useEffect(() => {
     setMounted(true);
+    // Detectar la URL del backend automáticamente
+    getBackendURL().then(url => {
+      console.log('Backend URL:', url);
+      setApiUrl(url);
+    });
   }, []);
 
   // Auto-update format when mediaType changes
@@ -55,9 +62,9 @@ export default function Home() {
   }, [mediaType]);
 
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !apiUrl) return;
 
-    const newSocket = io(API_URL);
+    const newSocket = io(apiUrl);
     setSocket(newSocket);
 
     newSocket.emit('subscribe-jobs');
@@ -82,7 +89,7 @@ export default function Home() {
       newSocket.emit('unsubscribe-jobs');
       newSocket.close();
     };
-  }, [mounted]);
+  }, [mounted, apiUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,7 +99,7 @@ export default function Home() {
     const urlList = urls.split('\n').filter(url => url.trim());
 
     try {
-      const response = await fetch(`${API_URL}/api/downloads`, {
+      const response = await fetch(`${apiUrl}/api/downloads`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -115,7 +122,7 @@ export default function Home() {
 
   const handleDownload = (downloadPath: string) => {
     // Abrir en una nueva pestaña, el backend fuerza la descarga con Content-Disposition
-    window.open(`${API_URL}${downloadPath}`, '_blank');
+    window.open(`${apiUrl}${downloadPath}`, '_blank');
   };
 
   const clearCompleted = () => {

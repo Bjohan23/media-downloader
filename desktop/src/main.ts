@@ -7,7 +7,9 @@ import treeKill = require('tree-kill');
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
+let frontendProcess: ChildProcess | null = null;
 let backendPort = 3001;
+let frontendPort = 3000;
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 // Determinar rutas según si está empaquetado o en desarrollo
@@ -68,6 +70,84 @@ function ensureDownloadsDir() {
   }
 }
 
+// Iniciar el servidor standalone de Next.js
+function startFrontend(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const paths = getAppPaths();
+
+    console.log('Starting frontend server...');
+
+    // Buscar un puerto disponible
+    portfinder.getPort({ port: 3000, stopPort: 3010 }, (err, port) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      frontendPort = port;
+
+      // En desarrollo, asumimos que el servidor ya está corriendo
+      // En producción, iniciamos el servidor standalone
+      if (isDev) {
+        console.log(`[Frontend] Using dev server on port ${frontendPort}`);
+        resolve(frontendPort);
+        return;
+      }
+
+      // Ruta al servidor standalone de Next.js
+      const serverJsPath = path.join(paths.frontendDist, 'standalone', 'server.js');
+
+      if (!fs.existsSync(serverJsPath)) {
+        console.warn(`Frontend server not found at ${serverJsPath}`);
+        // Si no existe, resolvemos de todos modos (el backend podría servirlo)
+        resolve(frontendPort);
+        return;
+      }
+
+      const env = {
+        ...process.env,
+        PORT: frontendPort.toString(),
+        NODE_ENV: 'production',
+      };
+
+      frontendProcess = spawn('node', [serverJsPath], {
+        cwd: path.dirname(serverJsPath),
+        env: env,
+        stdio: 'pipe',
+      });
+
+      if (frontendProcess.stdout) {
+        frontendProcess.stdout.on('data', (data: Buffer) => {
+          const message = data.toString();
+          console.log('[Frontend]', message);
+        });
+      }
+
+      if (frontendProcess.stderr) {
+        frontendProcess.stderr.on('data', (data: Buffer) => {
+          console.error('[Frontend Error]', data.toString());
+        });
+      }
+
+      frontendProcess.on('error', (err: Error) => {
+        console.error('[Frontend Process Error]', err);
+        // No rechazamos, el backend podría funcionar sin el frontend
+        resolve(frontendPort);
+      });
+
+      frontendProcess.on('exit', (code: number | null) => {
+        console.log(`[Frontend] exited with code ${code}`);
+      });
+
+      // Esperar un poco y asumir que inició
+      setTimeout(() => {
+        console.log(`[Frontend] Started on port ${frontendPort}`);
+        resolve(frontendPort);
+      }, 3000);
+    });
+  });
+}
+
 // Iniciar el backend NestJS
 function startBackend(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -92,6 +172,7 @@ function startBackend(): Promise<number> {
         DATABASE_URL: `file:${path.join(paths.downloadsPath, 'desktop.db')}`,
         DOWNLOAD_PATH: paths.downloadsPath,
         NODE_ENV: 'production',
+        DESKTOP_APP: 'true',
         YT_DLP_PATH: paths.ytDlpPath,
       };
 
@@ -184,7 +265,12 @@ function createWindow() {
   // Manejar cierre de la app
   mainWindow.on('close', (e) => {
     if (process.platform !== 'darwin') {
-      // Detener el backend al cerrar
+      // Detener el frontend y backend al cerrar
+      if (frontendProcess && frontendProcess.pid) {
+        console.log('Stopping frontend...');
+        treeKill(frontendProcess.pid, 'SIGTERM');
+        frontendProcess = null;
+      }
       if (backendProcess && backendProcess.pid) {
         console.log('Stopping backend...');
         treeKill(backendProcess.pid, 'SIGTERM');
@@ -200,28 +286,36 @@ function createWindow() {
 async function loadFrontend() {
   if (!mainWindow) return;
 
-  if (isDev) {
-    // En desarrollo, cargar el servidor de desarrollo de Next.js
-    mainWindow.loadURL('http://localhost:3000');
-  } else {
-    // En producción, esperar a que el backend inicie y luego cargar
-    try {
-      await startBackend();
+  try {
+    if (isDev) {
+      // En desarrollo, cargar el servidor de desarrollo de Next.js
+      mainWindow.loadURL('http://localhost:3000');
+    } else {
+      // En producción, iniciar frontend y backend
+      await Promise.all([
+        startFrontend(),
+        startBackend(),
+      ]);
+
+      console.log(`Frontend started on port ${frontendPort}`);
       console.log(`Backend started on port ${backendPort}`);
 
-      // Cargar el frontend de Next.js standalone
-      // Next.js se servirá desde el backend usando ServeStaticModule
-      mainWindow.loadURL(`http://localhost:${backendPort}`);
-    } catch (error) {
-      console.error('Failed to start backend:', error);
-      mainWindow.loadFile(path.join(__dirname, '../resources/error.html'));
+      // Cargar el frontend
+      mainWindow.loadURL(`http://localhost:${frontendPort}`);
     }
+  } catch (error) {
+    console.error('Failed to start servers:', error);
+    mainWindow.loadFile(path.join(__dirname, '../resources/error.html'));
   }
 }
 
 // Handlers IPC
 ipcMain.handle('get-backend-url', () => {
   return `http://localhost:${backendPort}`;
+});
+
+ipcMain.handle('get-frontend-url', () => {
+  return `http://localhost:${frontendPort}`;
 });
 
 ipcMain.handle('get-downloads-path', () => {
@@ -264,7 +358,11 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  // Asegurar que el backend se detenga
+  // Asegurar que el frontend y backend se detengan
+  if (frontendProcess && !frontendProcess.killed && frontendProcess.pid) {
+    console.log('Stopping frontend before quit...');
+    treeKill(frontendProcess.pid, 'SIGTERM');
+  }
   if (backendProcess && !backendProcess.killed && backendProcess.pid) {
     console.log('Stopping backend before quit...');
     treeKill(backendProcess.pid, 'SIGTERM');
