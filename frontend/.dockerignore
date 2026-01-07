@@ -5,9 +5,9 @@ npm-debug.log
 README.md
 .next
 .git
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+# NOTA: NO ignorar package-lock.json, npm ci lo requiere
+# yarn.lock
+# pnpm-lock.yaml
 test
 *.log
 local-*
