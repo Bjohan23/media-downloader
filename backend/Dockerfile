@@ -1,38 +1,47 @@
 # Multi-stage build optimizado para NestJS Backend
-# Autor: DevOps Senior
-# Estrategia: Separar deps, build y runner para máximo cache
+# Estrategia: Usar Debian slim para compatibilidad con Prisma/OpenSSL
 
 # ============================================
 # Stage 1: Dependencies (cacheable)
 # ============================================
-FROM node:20-alpine AS deps
+FROM node:20-slim AS deps
 
 WORKDIR /app
+
+# Instalar OpenSSL (requerido por Prisma)
+RUN apt-get update && apt-get install -y openssl && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copiar SOLAMENTE package files y prisma schema (maximiza cache)
 COPY package*.json ./
 COPY prisma ./prisma/
 
 # Instalar dependencias de forma reproducible
-RUN npm ci --ignore-scripts && \
-    npm cache clean --force
+RUN npm ci && npm cache clean --force
+
+# Generar Prisma client
+RUN npx prisma generate
 
 # ============================================
 # Stage 2: Builder
 # ============================================
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Copiar node_modules desde stage deps (evita reinstalar)
+# Instalar OpenSSL
+RUN apt-get update && apt-get install -y openssl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copiar node_modules y prisma desde stage deps
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/prisma ./prisma/
 COPY package*.json ./
 
-# Copiar código fuente (esta capa invalida cache si cambia código)
+# Copiar codigo fuente
 COPY . .
 
-# Generar Prisma client
+# Regenerar Prisma client (por si acaso)
 RUN npx prisma generate
 
 # Compilar TypeScript a JavaScript
@@ -41,27 +50,33 @@ RUN npm run build
 # ============================================
 # Stage 3: Production Runner
 # ============================================
-FROM node:20-alpine AS production
+FROM node:20-slim AS production
 
 WORKDIR /app
 
-# Configurar entorno de producción
+# Configurar entorno de produccion
 ENV NODE_ENV=production
 ENV PORT=3001
 ENV DOWNLOAD_PATH=/app/downloads
 
-# Crear usuario no-root (security best practice)
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nestjs
+# Instalar OpenSSL y curl (para healthcheck)
+RUN apt-get update && apt-get install -y openssl curl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Instalar dependencias de producción solamente
+# Crear usuario no-root (security best practice)
+RUN groupadd --system --gid 1001 nodejs && \
+    useradd --system --uid 1001 --gid nodejs nestjs
+
+# Copiar package files y prisma
 COPY package*.json ./
 COPY prisma ./prisma/
-RUN npm ci --only=production --ignore-scripts && \
+
+# Instalar dependencias de produccion y generar Prisma
+RUN npm ci --omit=dev && \
     npx prisma generate && \
     npm cache clean --force
 
-# Copiar archivos compilados y Prisma client desde builder
+# Copiar archivos compilados desde builder
 COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nestjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 
@@ -74,9 +89,9 @@ USER nestjs
 
 EXPOSE 3001
 
-# Health check (para orchestradores como Coolify, Kubernetes, etc)
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api || exit 1
+    CMD curl -sf http://localhost:3001/api/health || exit 1
 
-# Iniciar aplicación
+# Iniciar aplicacion
 CMD ["node", "dist/main.js"]
