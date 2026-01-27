@@ -25,6 +25,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# ARG para recibir variables de entorno en tiempo de build
+# Las variables NEXT_PUBLIC_* se "queman" en el build de Next.js
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
 # Copiar node_modules desde stage deps (evita reinstalar)
 COPY --from=deps /app/node_modules ./node_modules
 

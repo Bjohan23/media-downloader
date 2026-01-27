@@ -29,7 +29,10 @@
       "Bash(git add:*)",
       "Bash(git reset:*)",
       "Bash(git commit:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(rm:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(node scripts/clean-build.js:*)"
     ]
   }
 }

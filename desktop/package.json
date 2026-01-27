@@ -14,6 +14,8 @@
     "build:frontend": "cd ../frontend && npm run build",
     "build:backend": "cd ../backend && npm run build",
     "build:electron": "tsc -p tsconfig.json",
+    "clean": "node scripts/clean-build.js",
+    "prebuild": "npm run clean",
     "build": "npm run build:frontend && npm run build:backend && npm run build:electron",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
@@ -33,6 +35,7 @@
     "concurrently": "^8.2.2",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
+    "rimraf": "^6.1.2",
     "typescript": "^5.3.3",
     "wait-on": "^7.2.0"
   },
@@ -43,6 +46,11 @@
       "output": "release",
       "buildResources": "resources"
     },
+    "compression": "maximum",
+    "asarUnpack": [
+      "**/binaries/**/*",
+      "**/prisma/**/*"
+    ],
     "files": [
       "dist/**/*",
       "../backend/dist/**/*",

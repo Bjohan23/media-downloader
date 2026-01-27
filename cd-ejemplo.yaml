@@ -1,0 +1,155 @@
+name: Build and Deploy FavorappIdentity
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rollback_manual:
+        description: 'Forzar rollback a versión anterior'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  IMAGE_NAME: favorapp-identity
+  CONTAINER_NAME: favorapp-identity
+  NETWORK_DATA: data_net
+  NETWORK_PROXY: proxy_net
+  PORT: 8081
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Construir imagen Docker
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:latest .
+          docker save ${{ env.IMAGE_NAME }}:latest | gzip > image.tar.gz
+
+      - name: Copiar imagen al servidor
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          source: "image.tar.gz"
+          target: "/tmp"
+
+      - name: Desplegar en servidor con estándar Favorapp
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -e
+
+            # --- CONFIGURACIÓN ---
+            IMAGE_NAME="${{ env.IMAGE_NAME }}"
+            CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
+            NETWORK_DATA="${{ env.NETWORK_DATA }}"
+            NETWORK_PROXY="${{ env.NETWORK_PROXY }}"
+            PORT="${{ env.PORT }}"
+            MAX_RETRIES=10
+            RETRY_INTERVAL=3
+
+            # --- FUNCIÓN: Diagnóstico ---
+            diagnostico() {
+              echo "=== DIAGNÓSTICO DE ERROR ==="
+              docker ps -a --filter "name=$CONTAINER_NAME"
+              docker logs "$CONTAINER_NAME" --tail 20 2>&1 || true
+            }
+
+            # --- FUNCIÓN: Conectar a redes ---
+            conectar_redes() {
+              docker network connect "$NETWORK_DATA" "$CONTAINER_NAME" 2>/dev/null || true
+              docker network connect "$NETWORK_PROXY" "$CONTAINER_NAME" 2>/dev/null || true
+            }
+
+            # --- FUNCIÓN: Health Check ---
+            health_check() {
+              echo "Verificando salud en puerto $PORT..."
+              for i in $(seq 1 $MAX_RETRIES); do
+                if curl -sf --max-time 5 "http://127.0.0.1:${PORT}/health" > /dev/null 2>&1; then
+                  return 0
+                fi
+                sleep $RETRY_INTERVAL
+              done
+              return 1
+            }
+
+            # --- FUNCIÓN: Ejecutar Contenedor (Centralizado para evitar errores) ---
+            run_container() {
+              local TAG=$1
+              docker run -d \
+                --name "$CONTAINER_NAME" \
+                --restart unless-stopped \
+                -p ${PORT}:${PORT} \
+                -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+                -e TWILIO_SID="${{ secrets.TWILIO_SID }}" \
+                -e TWILIO_AUTH_TOKEN="${{ secrets.TWILIO_AUTH_TOKEN }}" \
+                -e TWILIO_PHONE="${{ secrets.TWILIO_PHONE }}" \
+                -e GOOGLE_CLIENT_ID="${{ secrets.GOOGLE_CLIENT_ID }}" \
+                -e GOOGLE_CLIENT_SECRET="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
+                -e REDIRECT_URL="${{ secrets.REDIRECT_URL }}" \
+                -e SMTP_HOST="${{ secrets.SMTP_HOST }}" \
+                -e SMTP_PORT="${{ secrets.SMTP_PORT }}" \
+                -e SMTP_USER="${{ secrets.SMTP_USER }}" \
+                -e SMTP_PASS="${{ secrets.SMTP_PASS }}" \
+                -e TZ="America/Lima" \
+                "$IMAGE_NAME:$TAG"
+            }
+
+            # --- PROCESO PRINCIPAL ---
+
+            # 1. Manejo de Rollback Manual
+            if [ "${{ github.event.inputs.rollback_manual }}" = "true" ]; then
+              echo "Iniciando Rollback Manual..."
+              docker stop "$CONTAINER_NAME" 2>/dev/null || true
+              docker rm "$CONTAINER_NAME" 2>/dev/null || true
+              run_container "backup"
+              conectar_redes
+              exit 0
+            fi
+
+            echo "[1/7] Cargando nueva imagen..."
+            docker load < /tmp/image.tar.gz
+            rm -f /tmp/image.tar.gz
+
+            echo "[2/7] Gestionando Backup..."
+            if docker images | grep -q "${IMAGE_NAME}:latest"; then
+              docker tag "${IMAGE_NAME}:latest" "${IMAGE_NAME}:backup"
+            fi
+
+            echo "[3/7] Deteniendo contenedor anterior..."
+            docker stop "$CONTAINER_NAME" 2>/dev/null || true
+            docker rm "$CONTAINER_NAME" 2>/dev/null || true
+
+            echo "[4/7] Iniciando nuevo contenedor..."
+            run_container "latest"
+
+            echo "[5/7] Conectando redes..."
+            conectar_redes
+
+            echo "[6/7] Verificando despliegue..."
+            if health_check; then
+              echo "DESPLIEGUE EXITOSO"
+              docker image prune -f 2>/dev/null || true
+            else
+              echo "FALLÓ EL DESPLIEGUE, EJECUTANDO ROLLBACK..."
+              diagnostico
+              docker stop "$CONTAINER_NAME" 2>/dev/null || true
+              docker rm "$CONTAINER_NAME" 2>/dev/null || true
+              run_container "backup"
+              conectar_redes
+              echo "ROLLBACK COMPLETADO"
+              exit 1
+            fi
