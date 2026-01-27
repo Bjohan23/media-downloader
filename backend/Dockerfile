@@ -89,8 +89,11 @@ USER nestjs
 
 EXPOSE 3001
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+# Health check (tolerante al startup de NestJS + Prisma + Redis)
+# start-period=60s: tiempo para que el backend arranque sin penalizar
+# interval=10s: verificacion frecuente una vez iniciado
+# retries=3: 3 fallos consecutivos = unhealthy
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -sf http://localhost:3001/api/health || exit 1
 
 # Iniciar aplicacion

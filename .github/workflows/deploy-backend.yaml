@@ -46,7 +46,7 @@ jobs:
           source: "image.tar.gz"
           target: "/tmp"
 
-      - name: Desplegar en servidor
+      - name: Desplegar en servidor (Enterprise Grade)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -55,44 +55,101 @@ jobs:
           script: |
             set -e
 
-            # --- CONFIGURACIÓN ---
+            # ═══════════════════════════════════════════════════════════════
+            # CONFIGURACIÓN
+            # ═══════════════════════════════════════════════════════════════
             IMAGE_NAME="${{ env.IMAGE_NAME }}"
             CONTAINER_NAME="${{ env.CONTAINER_NAME }}"
             NETWORK_DATA="${{ env.NETWORK_DATA }}"
             NETWORK_PROXY="${{ env.NETWORK_PROXY }}"
             PORT="${{ env.PORT }}"
-            MAX_RETRIES=15
-            RETRY_INTERVAL=3
 
-            # --- FUNCIÓN: Diagnóstico ---
-            diagnostico() {
-              echo "=== DIAGNÓSTICO DE ERROR ==="
-              docker ps -a --filter "name=$CONTAINER_NAME"
-              docker logs "$CONTAINER_NAME" --tail 30 2>&1 || true
+            # Timeouts enterprise-grade (tolerante a startup lento)
+            MAX_WAIT_HEALTHY=120  # segundos máximos esperando healthy
+            CHECK_INTERVAL=5      # segundos entre checks
+
+            # ═══════════════════════════════════════════════════════════════
+            # FUNCIONES ENTERPRISE-GRADE
+            # ═══════════════════════════════════════════════════════════════
+
+            log() {
+              echo "[$(date '+%H:%M:%S')] $1"
             }
 
-            # --- FUNCIÓN: Conectar a redes ---
+            # Diagnóstico completo en caso de fallo
+            diagnostico() {
+              echo ""
+              echo "═══════════════════════════════════════════════════════════════"
+              echo "DIAGNÓSTICO DE ERROR"
+              echo "═══════════════════════════════════════════════════════════════"
+              echo "Estado del contenedor:"
+              docker ps -a --filter "name=$CONTAINER_NAME" --format "table {{.Status}}\t{{.Ports}}"
+              echo ""
+              echo "Últimos 50 logs:"
+              docker logs "$CONTAINER_NAME" --tail 50 2>&1 || true
+              echo "═══════════════════════════════════════════════════════════════"
+            }
+
+            # Conectar a redes Docker
             conectar_redes() {
+              log "Conectando a redes Docker..."
               docker network connect "$NETWORK_DATA" "$CONTAINER_NAME" 2>/dev/null || true
               docker network connect "$NETWORK_PROXY" "$CONTAINER_NAME" 2>/dev/null || true
             }
 
-            # --- FUNCIÓN: Health Check ---
-            health_check() {
-              echo "Verificando salud en puerto $PORT..."
-              for i in $(seq 1 $MAX_RETRIES); do
-                echo "  Intento $i de $MAX_RETRIES..."
-                if curl -sf --max-time 5 "http://127.0.0.1:${PORT}/api/health" > /dev/null 2>&1; then
-                  echo "  ✓ Health check exitoso"
+            # SOLUCIÓN #1: Esperar estado HEALTHY (como Kubernetes/ECS)
+            wait_for_healthy() {
+              log "Esperando que el contenedor esté healthy (max ${MAX_WAIT_HEALTHY}s)..."
+
+              local elapsed=0
+              while [ $elapsed -lt $MAX_WAIT_HEALTHY ]; do
+                # Obtener estado de salud
+                local STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+                local RUNNING=$(docker inspect --format='{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo "false")
+
+                log "  Estado: $STATUS (running: $RUNNING) - ${elapsed}s transcurridos"
+
+                # Si está healthy, éxito
+                if [ "$STATUS" = "healthy" ]; then
+                  log "✅ Contenedor healthy!"
                   return 0
                 fi
-                sleep $RETRY_INTERVAL
+
+                # SOLUCIÓN #3: Si el contenedor murió, es un fallo real
+                if [ "$RUNNING" = "false" ]; then
+                  log "❌ Contenedor no está corriendo"
+                  return 1
+                fi
+
+                # Si está unhealthy (no starting), es un fallo
+                if [ "$STATUS" = "unhealthy" ]; then
+                  log "❌ Contenedor unhealthy"
+                  return 1
+                fi
+
+                # Si está starting, seguir esperando (NO es un fallo)
+                sleep $CHECK_INTERVAL
+                elapsed=$((elapsed + CHECK_INTERVAL))
               done
-              echo "  ✗ Health check falló después de $MAX_RETRIES intentos"
+
+              # Timeout alcanzado - verificar si al menos está corriendo
+              local FINAL_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+              local FINAL_RUNNING=$(docker inspect --format='{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo "false")
+
+              if [ "$FINAL_RUNNING" = "true" ] && [ "$FINAL_STATUS" = "starting" ]; then
+                # SOLUCIÓN #4: Verificar desde dentro del contenedor
+                log "Timeout pero contenedor corriendo. Verificando endpoint interno..."
+                if docker exec "$CONTAINER_NAME" curl -sf http://localhost:${PORT}/api/health > /dev/null 2>&1; then
+                  log "✅ Health check interno exitoso"
+                  return 0
+                fi
+              fi
+
+              log "❌ Timeout esperando healthy"
               return 1
             }
 
-            # --- FUNCIÓN: Ejecutar Contenedor ---
+            # Ejecutar contenedor con todas las variables de entorno
             run_container() {
               local TAG=$1
               docker run -d \
@@ -111,55 +168,80 @@ jobs:
                 "$IMAGE_NAME:$TAG"
             }
 
-            # --- PROCESO PRINCIPAL ---
+            # ═══════════════════════════════════════════════════════════════
+            # PROCESO PRINCIPAL
+            # ═══════════════════════════════════════════════════════════════
 
-            # 1. Manejo de Rollback Manual
+            # Manejo de Rollback Manual
             if [ "${{ github.event.inputs.rollback_manual }}" = "true" ]; then
-              echo "🔄 Iniciando Rollback Manual..."
+              log "🔄 ROLLBACK MANUAL SOLICITADO"
               docker stop "$CONTAINER_NAME" 2>/dev/null || true
               docker rm "$CONTAINER_NAME" 2>/dev/null || true
               run_container "backup"
               conectar_redes
-              echo "✓ Rollback completado"
+              wait_for_healthy
+              log "✅ Rollback completado"
               exit 0
             fi
 
-            echo "[1/7] Cargando nueva imagen..."
+            log "[1/6] Cargando nueva imagen..."
             docker load < /tmp/image.tar.gz
             rm -f /tmp/image.tar.gz
 
-            echo "[2/7] Gestionando Backup..."
-            if docker images | grep -q "${IMAGE_NAME}:latest"; then
+            log "[2/6] Creando backup de imagen actual..."
+            if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "${IMAGE_NAME}:latest"; then
               docker tag "${IMAGE_NAME}:latest" "${IMAGE_NAME}:backup" 2>/dev/null || true
+              log "  Backup creado: ${IMAGE_NAME}:backup"
+            else
+              log "  No hay imagen previa para backup"
             fi
 
-            echo "[3/7] Deteniendo contenedor anterior..."
+            log "[3/6] Deteniendo contenedor anterior..."
             docker stop "$CONTAINER_NAME" 2>/dev/null || true
             docker rm "$CONTAINER_NAME" 2>/dev/null || true
 
-            echo "[4/7] Iniciando nuevo contenedor..."
+            log "[4/6] Iniciando nuevo contenedor..."
             run_container "latest"
 
-            echo "[5/7] Conectando redes..."
+            log "[5/6] Conectando a redes..."
             conectar_redes
 
-            echo "[6/7] Verificando despliegue..."
-            if health_check; then
+            log "[6/6] Verificando despliegue..."
+            if wait_for_healthy; then
+              echo ""
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
               echo "✅ DESPLIEGUE EXITOSO"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "Backend: https://api.mediadownloader.johandev.lat"
+              echo "Health:  https://api.mediadownloader.johandev.lat/api/health"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+              # Limpieza de imágenes antiguas
               docker image prune -f 2>/dev/null || true
             else
-              echo "❌ FALLÓ EL DESPLIEGUE, EJECUTANDO ROLLBACK..."
+              echo ""
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "❌ DESPLIEGUE FALLIDO - EJECUTANDO ROLLBACK"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
               diagnostico
-              docker stop "$CONTAINER_NAME" 2>/dev/null || true
-              docker rm "$CONTAINER_NAME" 2>/dev/null || true
-              run_container "backup"
-              conectar_redes
-              echo "🔄 ROLLBACK COMPLETADO"
+
+              # Solo hacer rollback si hay backup disponible
+              if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "${IMAGE_NAME}:backup"; then
+                log "Ejecutando rollback a versión anterior..."
+                docker stop "$CONTAINER_NAME" 2>/dev/null || true
+                docker rm "$CONTAINER_NAME" 2>/dev/null || true
+                run_container "backup"
+                conectar_redes
+
+                if wait_for_healthy; then
+                  log "✅ Rollback exitoso"
+                else
+                  log "❌ Rollback también falló"
+                fi
+              else
+                log "⚠️ No hay backup disponible para rollback"
+              fi
+
               exit 1
             fi
-
-            echo "[7/7] Limpieza completada"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "Backend desplegado en puerto $PORT"
-            echo "URL: https://api.mediadownloader.johandev.lat"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
