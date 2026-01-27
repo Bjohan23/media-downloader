@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { DownloadModule } from './modules/download/download.module';
 import { WebSocketModule } from './modules/websocket/websocket.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { HealthModule } from './modules/health/health.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { PrismaModule } from './common/prisma.module';
 import { join } from 'path';
@@ -14,6 +15,7 @@ import { join } from 'path';
     }),
     PrismaModule,
     AuthModule,
+    HealthModule,
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', '..', 'downloads'),
       serveRoot: '/downloads',

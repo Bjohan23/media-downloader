@@ -82,7 +82,7 @@ jobs:
               echo "Verificando salud en puerto $PORT..."
               for i in $(seq 1 $MAX_RETRIES); do
                 echo "  Intento $i de $MAX_RETRIES..."
-                if curl -sf --max-time 5 "http://127.0.0.1:${PORT}/api" > /dev/null 2>&1; then
+                if curl -sf --max-time 5 "http://127.0.0.1:${PORT}/api/health" > /dev/null 2>&1; then
                   echo "  ✓ Health check exitoso"
                   return 0
                 fi
