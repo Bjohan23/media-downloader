@@ -1,0 +1,88 @@
+# Docker Compose para desarrollo/pruebas locales
+# Uso: docker-compose -f docker-compose.dev.yml up --build
+
+services:
+  # Base de datos PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: mediadownloader-postgres
+    environment:
+      POSTGRES_USER: mediadownloader
+      POSTGRES_PASSWORD: mediadownloader123
+      POSTGRES_DB: mediadownloader
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mediadownloader"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (opcional, para colas)
+  redis:
+    image: redis:7-alpine
+    container_name: mediadownloader-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend NestJS
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mediadownloader-backend
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://mediadownloader:mediadownloader123@postgres:5432/mediadownloader
+      JWT_SECRET: dev-jwt-secret-change-in-production
+      FRONTEND_URL: http://localhost:3000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DOWNLOAD_PATH: /app/downloads
+    ports:
+      - "3001:3001"
+    volumes:
+      - downloads_data:/app/downloads
+      # Montar cookies de YouTube (opcional pero recomendado)
+      # Exporta cookies de tu navegador a ./cookies/cookies.txt
+      - ./cookies:/app/cookies
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+  # Frontend Next.js
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3001
+    container_name: mediadownloader-frontend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  downloads_data:

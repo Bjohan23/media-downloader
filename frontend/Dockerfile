@@ -13,6 +13,12 @@ WORKDIR /app
 # Si package.json cambia pero package-lock.json no, npm ci usa cache
 COPY package*.json ./
 
+# Configurar npm para mayor resiliencia de red (evita ECONNRESET en Docker/Windows)
+RUN npm config set prefer-online true && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000
+
 # Instalar dependencias de forma reproducible
 # npm ci es más rápido y confiable que npm install
 RUN npm ci --ignore-scripts && \
@@ -43,7 +49,9 @@ ENV NODE_ENV=production
 
 # Build de Next.js con output standalone
 # Esto crea una carpeta .next/standalone con todo lo necesario
-RUN npm run build
+# Aumentar memoria para Node.js en builds grandes
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+RUN npm run build || (echo "Build failed, showing error details:" && exit 1)
 
 # ============================================
 # Stage 3: Production Runner

@@ -40,3 +40,7 @@ db/*.db
 
 # OS
 Thumbs.db
+
+# Cookies - se suben al repo para facilitar actualizaciones
+# NOTA: Las cookies de YouTube expiran, actualizar cuando sea necesario
+*.cookies

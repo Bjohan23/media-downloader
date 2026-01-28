@@ -91,9 +91,16 @@ export class DownloadService {
 
   private async getVideoInfo(url: string): Promise<{ title: string; duration: string; thumbnail: string }> {
     return new Promise((resolve, reject) => {
+      const cookiesPath = path.join(process.cwd(), 'cookies', 'cookies.txt');
+      const hasCookies = fs.existsSync(cookiesPath);
+
       const args = [
         '--dump-json',
         '--no-playlist',
+        // Forzar cliente web (android no soporta cookies)
+        '--extractor-args', 'youtube:player_client=web',
+        // Usar cookies si existen (evita bloqueo de bot)
+        ...(hasCookies ? ['--cookies', cookiesPath] : []),
         url,
       ];
 
@@ -141,10 +148,17 @@ export class DownloadService {
     format: string,
   ): { args: string[]; outputTemplate: string } {
     const outputTemplate = path.join(downloadPath, '%(title)s.%(ext)s');
+    const cookiesPath = path.join(process.cwd(), 'cookies', 'cookies.txt');
+    const hasCookies = fs.existsSync(cookiesPath);
+
     const args = [
       '--no-playlist',
       '--newline',
       '--progress',
+      // Forzar cliente web (android no soporta cookies)
+      '--extractor-args', 'youtube:player_client=web',
+      // Usar cookies si existen (evita bloqueo de bot)
+      ...(hasCookies ? ['--cookies', cookiesPath] : []),
       '-o', outputTemplate,
     ];
 
