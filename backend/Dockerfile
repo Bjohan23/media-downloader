@@ -59,9 +59,20 @@ ENV NODE_ENV=production
 ENV PORT=3001
 ENV DOWNLOAD_PATH=/app/downloads
 
-# Instalar OpenSSL y curl (para healthcheck)
-RUN apt-get update && apt-get install -y openssl curl && \
-    rm -rf /var/lib/apt/lists/*
+# Instalar dependencias del sistema:
+# - openssl: requerido por Prisma
+# - curl: para healthcheck
+# - ffmpeg: para procesar/convertir audio y video
+# - python3: requerido por yt-dlp
+# - yt-dlp: para descargar videos de YouTube y otras plataformas
+RUN apt-get update && apt-get install -y \
+    openssl \
+    curl \
+    ffmpeg \
+    python3 \
+    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp \
+    && rm -rf /var/lib/apt/lists/*
 
 # Crear usuario no-root (security best practice)
 RUN groupadd --system --gid 1001 nodejs && \
